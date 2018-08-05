@@ -1,0 +1,357 @@
+//CURRENT REACTION SETTING: 23Mg (p,g) 24Al
+
+/*
+USAGE OF ARGUMENTS: the argument to the recon() function is the name of the input file with .root extension.
+
+This version of recon.C can only be used with ROOT Trees that contain the "binitenerg" branches, from which the initial beam energy can be extracted. Otherwiese, use old_recon.C.
+
+*/
+
+
+#include "recon.h"
+
+
+
+
+
+
+
+void temp_recon(TString inputFileName = "centred.root"){
+
+
+  bool BINITENERG_PRESENT;
+  bool GAMMATOFP_PRESENT;
+  
+  TString answer;
+  
+
+  do{
+    
+    cout<<"Does your .root file have a \"binitenerg\" branch in the h1000 tree? (y/n)\t";
+    cin>>answer;
+    
+    if(answer == "y"){
+      BINITENERG_PRESENT = true;
+    }
+    else if(answer == "n"){
+      BINITENERG_PRESENT = false;
+    }
+    else{
+      cout<<"Please, asnwer with 'y' or 'n'.\t"<<endl;
+    }
+  }
+  while(answer != "y" && answer !="n");
+    
+ do{
+    
+    cout<<"Does your .root file have a \"gammatofp\" branch in the h1001 tree? (y/n)\t\t";
+    cin>>answer;
+    
+    if(answer == "y"){
+      GAMMATOFP_PRESENT = true;
+    }
+    else if(answer == "n"){
+      GAMMATOFP_PRESENT = false;
+    }
+    else{
+      cout<<"Please, asnwer with 'y' or 'n'.\t"<<endl;
+    }
+  }
+  while(GAMMATOFP_PRESENT != true && GAMMATOFP_PRESENT != false);
+  
+
+  TString inputFilePath = "./";
+
+  TFile *f = new TFile(inputFilePath+inputFileName);
+
+  if (f->IsZombie()) return;
+  
+  
+  Float_t m = 22.9941237;
+  Float_t zint,gammatof,gammatofp,dt,z,zbeam,beamtof,t_gamma;
+  
+  TTree *h1000 = (TTree*)f->Get("h1000");
+  TTree *h1001 = (TTree*)f->Get("h1001");
+
+  
+  h1000->SetBranchAddress("zint",&zint);
+  h1001->SetBranchAddress("gammatof",&gammatof);
+  if(GAMMATOFP_PRESENT == true){
+    h1001->SetBranchAddress("gammatofp",&gammatofp);
+  }
+  h1000->SetBranchAddress("z",&zbeam);
+  h1000->SetBranchAddress("binitenerg",&E_i);
+  h1000->SetBranchAddress("beamtof",&beamtof);
+
+  if (BINITENERG_PRESENT == false){
+    E_i = filename_to_E(inputFileName);
+    
+    cout<<"Initial energy data missing. Initial energy will be estimated from file title (follow directions in script preamble."<<endl;
+  }
+  else{  
+    h1000->SetBranchAddress("binitenerg",&E_i);
+  }
+  
+
+  h1000->GetEntry(0);
+
+
+  cout<<"INITIAL BEAM ENERGY =\t"<<E_i<<endl;
+
+
+  m=m*amu;//Converts mass in MeV/c^2
+  
+
+  Int_t nentries = (Int_t)h1000->GetEntries();
+
+
+
+
+
+  //Calculating average photon time of flight
+  
+  TH1F *t_gamma_hist = new TH1F("t gamma",
+				"Time of flight of radiated photons; time [ns];Counts",
+				1000,
+				-2,
+				2);
+
+
+
+
+  
+  for(Int_t i=0;i<nentries;i++){
+    h1000->GetEntry(i);
+    h1001->GetEntry(i);
+
+    if(GAMMATOFP_PRESENT == false){
+      gammatofp = gammatof;
+    }
+    
+    if(gammatofp<200. && gammatofp>0.){
+      
+      beamtof = beamtof*(10**9);        //Converting beamtof from s to ns
+      t_gamma = gammatofp-beamtof;
+   
+      t_gamma_hist->Fill(t_gamma);
+    }
+  }
+ 
+  t_gamma = t_gamma_hist->GetMean();
+
+  cout<<"t_gamma mean is\t"<<t_gamma<<" ns"<<endl;
+
+
+  
+  TH1F *zbeam_hist = new TH1F("zbeam","filler",10000,-200.,-50.);
+
+  for (Int_t i=0;i<nentries;i++){
+    h1000->GetEntry(i);
+    zbeam_hist->Fill(zbeam);
+  }
+  zbeam = zbeam_hist->GetMean();
+
+ 
+
+  if(zbeam==0)
+    {
+      zbeam=-88.*.999; 
+
+      cout<<"Initial beam position estimated since missing on current ROOT Tree"<<endl;
+    }
+
+
+  //Calculating expected initial velocity of incident particles (non-relativistically)
+  Float_t v_i = sqrt(2*E_i/m)*c; // cm/ns
+  Float_t t1 = ((-zbeam-half_thickness)/v_i); //time to reach beginning of gas target (ns)
+  
+  Float_t upper_limit = 10.;
+  Float_t lower_limit = -10.;
+
+  TH1F *recon = new TH1F("zrecon","Z-coordinate reconstruction;Distance from centre of gas target [cm];Counts",280,lower_limit,upper_limit);
+  TH1F *zint_hist = new TH1F("zint_hist",";Distance from centre of gas target [cm];Counts",280,lower_limit,upper_limit);
+  TH1F *residuals = new TH1F("Residuals","Residuals;zint-z [cm];Counts",280.,lower_limit,upper_limit);
+ 
+  
+  nentries = (Int_t)h1001->GetEntries();
+
+  //Data for graph
+  const Int_t num_points_max = nentries;
+  Float_t nevts [num_points_max] = {};
+  Float_t meanz [num_points_max] = {};
+  Float_t xerr [num_points_max] = {};
+  Float_t yerr_RMS [num_points_max] = {};
+  Float_t yerr_mean [ num_points_max] = {};
+  Int_t counter = 0;
+
+ 
+  
+
+  
+  for (Int_t i=0;i<nentries;i++){
+    h1000->GetEntry(i);
+    h1001->GetEntry(i);
+    if(gammatof<200. && gammatof>80.){
+      
+      //dt = gammatof-t1;
+      dt = gammatof - t1 - t_gamma;
+      z = (-SPow*pow(dt,2))/(2*m)*pow(c,2) + v_i*dt-half_thickness; // cm from centre of gas target
+      recon->Fill(z);
+      
+      zint_hist->Fill(zint);
+
+      if(i<51||(i%50==0 && i<301)||i%500==0){
+	nevts[counter]=i;
+	meanz[counter]=recon->GetMean();
+	
+	//	yerr[counter]=recon->GetMeanError();
+	yerr_RMS[counter]=recon->GetRMS();
+	yerr_mean[counter]=recon->GetMeanError();
+	counter++;
+	//cout<<counter<<"\tzint\t"<<zint<<endl;
+      }
+    }
+  }
+
+
+  //Calculation of residuals
+  Float_t residual;
+  Float_t expected_mean = recon->GetMean();
+  
+  for (Int_t i=0;i<nentries;i++){
+    h1000->GetEntry(i);
+    h1001->GetEntry(i);
+    if(gammatof<200. && gammatof>80.){
+      //dt = gammatof-t1;
+      dt = gammatof - t1 - t_gamma;
+      z = (-SPow*pow(dt,2))/(2*m)*pow(c,2) + v_i*dt-half_thickness; // cm from centre of gas target
+     
+       //Residuals
+      residual=z-expected_mean;
+      residuals->Fill(residual);
+    }
+  }
+
+
+  
+  // TFile outputfile(outputFileName.c_str(),"RECREATE");
+
+  
+  c1 = new TCanvas("canvas","multipads",678,40,678,800);
+  c1->Divide(2,2,0.005,0.005);
+
+  c1->cd(1);
+  //  c1 = new TCanvas("c1","A Simple Graph with error bars",200,10,700,500);
+  c1->cd(1).SetLogx();  
+  gPad->SetTickx(2);
+  gr = new TGraphErrors(counter,nevts,meanz,xerr,yerr_RMS);
+  gr->SetTitle("Z-reconstruction mean vs number of events;N events;Distance from centre of gas target [cm]");
+  gr->SetMarkerColor(4);
+  gr->SetMarkerStyle(21);
+  gr->SetFillColor(0);
+  gr->Draw("AP");
+  
+  
+  gr2 = new TGraphErrors(counter,nevts,meanz,xerr,yerr_mean);
+  gr2->SetMarkerColor(4);
+  gr2->SetLineColor(8);
+  gr2->SetMarkerStyle(21);
+  gr2->SetFillColor(0);
+  gr2->Draw("P");
+
+  TLegend *legend = new TLegend(0.6,0.81,0.9,0.9);
+  legend->AddEntry(gr,"RMS - error");
+  legend->AddEntry(gr2,"Error on the mean");
+  legend->Draw();
+  
+
+  c1->Update();
+
+
+  c1->cd(2);
+  //  c2 = new TCanvas("c2","Afefef Simple Graph with error bars",200,10,700,500);
+  recon->Draw();
+  
+  Float_t ymax = recon->GetMaximum();
+  TLine *l1 = new TLine(-half_thickness,0,-half_thickness,ymax);
+  TLine *l2 = new TLine(half_thickness,0,half_thickness,ymax);
+  
+  Float_t line_color = 42;
+  Float_t line_style = 2;
+
+  l1->SetLineColor(line_color);
+  l2->SetLineColor(line_color);
+  l1->SetLineStyle(line_style);
+  l2->SetLineStyle(line_style);
+  l1->Draw("same");
+  l2->Draw("same");
+
+  recon->Draw("same");
+
+  c1->cd(3);
+  residuals->Draw();
+
+  c1->cd(4);
+  
+  zint_hist->Draw();
+
+  //c1_4->Update();
+   
+  Float_t ymax = zint_hist->GetMaximum();
+  TLine *l1 = new TLine(-half_thickness,0,-half_thickness,ymax);
+  TLine *l2 = new TLine(half_thickness,0,half_thickness,ymax);
+  
+  l1->SetLineColor(line_color);
+  l2->SetLineColor(line_color);
+  l1->SetLineStyle(line_style);
+  l2->SetLineStyle(line_style);
+  l1->Draw("same");
+  l2->Draw("same");
+  
+
+  recon->Draw("same");
+  recon->SetLineColor(8);
+
+    
+  
+  cout<<"E_i\t"<<E_i<<"\t\tMeV\nSPow\t"<<SPow<<"\tMeV/cm\nm\t"<<m<<"\t\tMeV/c^2"<<endl;
+  
+  
+  /*
+  c2 = new TCanvas("canvas_temp","temp canvas",900,700);
+  
+  t_gamma_hist->Draw();
+  
+  
+  c3 = new TCanvas("printable","printable canvas",900,700);
+  
+  zint_hist->Draw();
+
+  zint_hist->GetYaxis()->SetTitleOffset(1.2);
+
+
+  
+  Float_t ymax = zint_hist->GetMaximum();
+  TLine *l1 = new TLine(-half_thickness,0,-half_thickness,ymax);
+  TLine *l2 = new TLine(half_thickness,0,half_thickness,ymax);
+  
+  l1->SetLineColor(line_color);
+  l2->SetLineColor(line_color);
+  l1->SetLineStyle(line_style);
+  l2->SetLineStyle(line_style);
+  l1->Draw("same");
+  l2->Draw("same");
+  
+  
+  recon->Draw("same");
+  recon->SetLineColor(8);
+
+ 
+  TLegend *legend = new TLegend(0.6,0.81,0.9,0.9);
+  legend->AddEntry(zint_hist,"Real resonance position (zint_hist)");
+  legend->AddEntry(recon,"Reconstructed position (zrecon)");
+  legend->Draw();
+*/
+}
+
+

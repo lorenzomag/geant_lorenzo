@@ -1,0 +1,17 @@
+#include "recon.h"
+
+
+void effic(TString inputFileName = "all_BGO.root"){
+
+  // Open BGO file
+  TString inputFilePath = "./";
+  TFile *f = new TFile(inputFilePath+"centred.root");
+  if (f->IsZombie()) return;
+
+  Float_t e_bgo;
+
+  // Open trees and branches
+  TTree *h1001 = (TTree*)f->Get("h1001");
+  h1001->SetBranchAddress("e_bgo_first",&e_bgo);
+
+}
